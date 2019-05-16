@@ -22,31 +22,32 @@ type Photo struct {
 	exifData *exif.Exif
 }
 
-// ExifReader provides exif data from a photo
-type ExifReader interface {
-	date() time.Time
-}
-
 func main() {
 	usage := `Photo Sort - sorts your photos
 
 Usage:
-  photosort (year|month|day|hour|minute) <inputdir> [--recursive] [--cleanup]
+  photosort [options] (year|month|day|hour|minute) <inputdir>
 
 Options:
-  -h --help     Show this screen.
-  -v, --verbose Show whats being done
-  -d, --dryrun  Simulate sorting
-  --version     Show version.`
+  -h --help        Show this screen.
+  -v, --verbose    Show whats being done
+  -d, --dryrun     Simulate sorting
+  -r, --recursive  Scan directories recursively
+  -c, --cleanup    Remove empty source directories when run recursively
+  --version        Show version.`
 
 	arguments, err := docopt.ParseArgs(usage, os.Args[1:], VERSION)
 	if err != nil {
 		log.Fatal(err)
 	}
-	var photoList []*Photo
+	verbose := arguments["--verbose"].(bool)
+	dryrun := arguments["--dryrun"].(bool)
+	doCleanup := arguments["--cleanup"].(bool)
+	recursive := arguments["--recursive"].(bool)
 	searchPath := path.Clean(arguments["<inputdir>"].(string))
-	photoList = gatherFiles(searchPath, photoList,
-		arguments["--recursive"].(bool))
+
+	var photoList []*Photo
+	photoList = gatherFiles(searchPath, photoList, dryrun)
 	var granularity string
 	for _, g := range []string{"year", "month", "day", "hour", "minute"} {
 		if arguments[g].(bool) {
@@ -55,7 +56,37 @@ Options:
 	}
 	for _, p := range photoList {
 		p.load()
-		p.move(granularity)
+		p.move(granularity, dryrun, verbose || dryrun)
+	}
+	if doCleanup && recursive && !dryrun {
+		cleanup(searchPath, verbose)
+	}
+}
+
+func cleanup(rootPath string, verbose bool) {
+	files, err := ioutil.ReadDir(rootPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, f := range files {
+		if f.IsDir() {
+			fls, err := ioutil.ReadDir(rootPath)
+			relPath := path.Join(rootPath, f.Name())
+			if err != nil {
+				log.Fatal(err)
+			}
+			if len(fls) == 0 {
+				if verbose {
+					fmt.Printf("Removing %s", relPath)
+				}
+				err = os.Remove(relPath)
+				if err != nil {
+					log.Fatal(err)
+				}
+			} else {
+				cleanup(relPath, verbose)
+			}
+		}
 	}
 }
 
@@ -123,7 +154,7 @@ func (p *Photo) fileDir() string {
 	return strings.Join(pathSplit[:len(pathSplit)-1], "/")
 }
 
-func (p *Photo) move(granularity string) {
+func (p *Photo) move(granularity string, dryrun bool, verbose bool) {
 	var destPath string
 	switch granularity {
 	case "year":
@@ -147,10 +178,20 @@ func (p *Photo) move(granularity string) {
 		log.Fatalf("unknown granularity: %s", granularity)
 	}
 
-	// err := os.MkdirAll(destPath, os.FileMode(int(0755)))
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	if verbose {
+		fmt.Printf("%s => %s/%s\n", p.path, destPath, p.fileName())
+	}
 
-	fmt.Printf("%s => %s/%s\n", p.path, destPath, p.fileName())
+	if !dryrun {
+		err := os.MkdirAll(destPath, os.FileMode(int(0755)))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if p.path != destPath {
+			err = os.Rename(p.path, destPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
 }
