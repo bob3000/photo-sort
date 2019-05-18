@@ -188,7 +188,7 @@ func (p *Photo) move(granularity string, dryrun bool, verbose bool) {
 			log.Fatal(err)
 		}
 		if p.path != destPath {
-			err = os.Rename(p.path, destPath)
+			err = os.Rename(p.path, path.Join(destPath, p.fileName()))
 			if err != nil {
 				log.Fatal(err)
 			}
